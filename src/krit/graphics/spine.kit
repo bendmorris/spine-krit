@@ -1,0 +1,163 @@
+import kit.sys.file;
+
+include "spine/spine.h" => "spine-c";
+
+struct SpineSkeleton {
+    public static const worldVertices: Vector[Float] = Vector.new(256);
+
+    public var position: Point = P();
+    public var scale: ScaleFactor = struct ScaleFactor;
+    public var color: Color = Color.White;
+    public var alpha: Float = 1;
+    public var visible: Bool = true;
+    public var angle: Float = 0;
+    public var smooth: Bool = true;
+    public var rate: Float = 1;
+
+    public var skeleton: Ptr[spSkeleton];
+    public var animation: Ptr[spAnimationState];
+
+    public static function new(asset: Ptr[AssetContext]): Self {
+        spineAssetContext = asset;
+        spBone_setYDown(1);
+
+        // skeleton/animation data
+        var atlas: Ptr[spAtlas] = spAtlas_createFromFile("test-project/assets/mouse.atlas", null);
+        var binary: Ptr[spSkeletonBinary] = spSkeletonBinary_create(atlas);
+        var skeletonData: Ptr[spSkeletonData] = spSkeletonBinary_readSkeletonDataFile(binary, "test-project/assets/mouse.skel");
+        var animationStateData: Ptr[spAnimationStateData] = spAnimationStateData_create(skeletonData);
+        animationStateData.defaultMix = 1_f32/60;
+        // instance data
+        var skeleton = spSkeleton_create(skeletonData);
+        var animation = spAnimationState_create(animationStateData);
+        return struct SpineSkeleton {skeleton, animation};
+    }
+
+    public function setAnimationByName(track: Int, name: CString, loop: Bool) {
+        spAnimationState_setAnimationByName(this.animation, track, name, if loop then 1 else 0);
+    }
+
+    public function addAnimationByName(track: Int, name: CString, loop: Bool, after: Float) {
+        spAnimationState_addAnimationByName(this.animation, track, name, if loop then 1 else 0, after);
+    }
+
+    public function setAttachment(slot: CString, attachment: CString) {
+        spSkeleton_setAttachment(this.skeleton, slot, attachment);
+    }
+}
+
+implement Graphic for SpineSkeleton {
+    public function render(context: Ptr[RenderContext]): Void {
+        var skeleton = this.skeleton;
+        for i in 0 ... skeleton.slotsCount {
+            var slot = skeleton.drawOrder[i];
+            var attachment = slot.attachment;
+            if attachment == null {
+                continue;
+            }
+            var blendMode = BlendMode.Alpha;
+            match slot.data.blendMode {
+                SP_BLEND_MODE_ADDITIVE => {
+                    blendMode = BlendMode.Add;
+                }
+                SP_BLEND_MODE_MULTIPLY => {
+                    blendMode = BlendMode.Multiply;
+                }
+                SP_BLEND_MODE_SCREEN => {
+                    blendMode = BlendMode.BlendScreen;
+                }
+            }
+            // var tintR: Float = skeleton.r * slot.r;
+            // var tintG: Float = skeleton.g * slot.g;
+            // var tintB: Float = skeleton.b * slot.b;
+            // var tintA: Float = skeleton.a * slot.a;
+            match attachment.type {
+                SP_ATTACHMENT_REGION => {
+                    var worldVertices = SpineSkeleton.worldVertices.ref();
+                    var regionAttachment = attachment as Ptr[spRegionAttachment];
+                    var image = (regionAttachment.rendererObject as Ptr[spAtlasRegion]).page.rendererObject as Ptr[ImageData];
+                    var imageRegion = ImageRegion.fromImage(image);
+                    // before rendering via spSkeleton_updateWorldTransform
+                    spRegionAttachment_computeWorldVertices(regionAttachment, slot.bone, worldVertices, 0, 2);
+                    var key = struct DrawKey {
+                        image: imageRegion.image,
+                        smooth: this.smooth,
+                        blend: blendMode,
+                    };
+                    var color = Color.White.withAlpha(1); // FIXME
+                    var uvs: Ptr[Float] = regionAttachment.uvs;
+                    context.addTriangle(
+                        key,
+                        T(worldVertices[0], worldVertices[1], worldVertices[2], worldVertices[3], worldVertices[4], worldVertices[5]),
+                        T(uvs[0], uvs[1], uvs[2], uvs[3], uvs[4], uvs[5]),
+                        color, false
+                    );
+                    context.addTriangle(
+                        key,
+                        T(worldVertices[4], worldVertices[5], worldVertices[6], worldVertices[7], worldVertices[0], worldVertices[1]),
+                        T(uvs[4], uvs[5], uvs[6], uvs[7], uvs[0], uvs[1]),
+                        color, false
+                    );
+                }
+                SP_ATTACHMENT_MESH => {
+                    var mesh = attachment as Ptr[spMeshAttachment];
+                    SpineSkeleton.worldVertices.ensureSize(mesh.trianglesCount * 6);
+                    var worldVertices = SpineSkeleton.worldVertices.ref();
+                    var image = (mesh.rendererObject as Ptr[spAtlasRegion]).page.rendererObject as Ptr[ImageData];
+                    var imageRegion = ImageRegion.fromImage(image);
+                    // before rendering via spSkeleton_updateWorldTransform
+                    spVertexAttachment_computeWorldVertices(mesh.super, slot, 0, mesh.super.worldVerticesLength, worldVertices, 0, 2);
+                    var key = struct DrawKey {
+                        image: imageRegion.image,
+                        smooth: this.smooth,
+                        blend: blendMode,
+                    };
+                    var uvs: Ptr[Float] = mesh.uvs;
+                    var color = Color.White.withAlpha(1); // FIXME
+                    for i in 0 ... mesh.trianglesCount / 3 {
+                        var i0 = mesh.triangles[i * 3] << 1;
+                        var i1 = mesh.triangles[i * 3 + 1] << 1;
+                        var i2 = mesh.triangles[i * 3 + 2] << 1;
+                        context.addTriangle(
+                            key,
+                            T(worldVertices[i0], worldVertices[i0 + 1], worldVertices[i1], worldVertices[i1 + 1], worldVertices[i2], worldVertices[i2 + 1]),
+                            T(uvs[i0], uvs[i0 + 1], uvs[i1], uvs[i1 + 1], uvs[i2], uvs[i2 + 1]),
+                            color, false
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    public function update(context: Ptr[UpdateContext]) {
+        var elapsed = context.elapsed * this.rate;
+        if elapsed > 0 {
+            spSkeleton_update(this.skeleton, elapsed);
+            spAnimationState_update(this.animation, elapsed);
+            spAnimationState_apply(this.animation, this.skeleton);
+            spSkeleton_updateWorldTransform(this.skeleton);
+        }
+    }
+}
+
+var spineAssetContext: Ptr[AssetContext];
+
+// Spine extension functions
+#[extern] function _spUtil_readFile(path: CString, length: Ptr[Int]): CString {
+    printf("reading file %s\n", path);
+    var f = File.read(path);
+    *length = f.getSize();
+    var buf = malloc(length);
+    f.readBytes(buf, length);
+    return buf;
+}
+
+
+#[extern] function _spAtlasPage_createTexture(page: Ptr[spAtlasPage], path: CString): Void {
+    printf("creating texture %s\n", path);
+    var asset: Ptr[ImageData] = spineAssetContext.getImage(path);
+    page.rendererObject = asset;
+}
+
+#[extern] function _spAtlasPage_disposeTexture(self: Ptr[spAtlasPage]): Void {}
