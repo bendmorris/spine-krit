@@ -14,23 +14,21 @@ struct SpineSkeleton {
     public var smooth: Bool = true;
     public var rate: Float = 1;
 
-    public var skeleton: Ptr[spSkeleton];
-    public var animation: Ptr[spAnimationState];
+    public var skeleton: Ptr[spSkeleton] = null;
+    public var animation: Ptr[spAnimationState] = null;
 
-    public static function new(asset: Ptr[AssetContext]): Self {
+    public function init(asset: Ptr[AssetContext], atlasName: CString, skeletonName: CString): Self {
         spineAssetContext = asset;
         spBone_setYDown(1);
 
         // skeleton/animation data
-        var atlas: Ptr[spAtlas] = spAtlas_createFromFile("test-project/assets/mouse.atlas", null);
+        var atlas: Ptr[spAtlas] = spAtlas_createFromFile(atlasName, null);
         var binary: Ptr[spSkeletonBinary] = spSkeletonBinary_create(atlas);
-        var skeletonData: Ptr[spSkeletonData] = spSkeletonBinary_readSkeletonDataFile(binary, "test-project/assets/mouse.skel");
+        var skeletonData: Ptr[spSkeletonData] = spSkeletonBinary_readSkeletonDataFile(binary, skeletonName);
         var animationStateData: Ptr[spAnimationStateData] = spAnimationStateData_create(skeletonData);
-        animationStateData.defaultMix = 1_f32/60;
         // instance data
-        var skeleton = spSkeleton_create(skeletonData);
-        var animation = spAnimationState_create(animationStateData);
-        return struct SpineSkeleton {skeleton, animation};
+        this.skeleton = spSkeleton_create(skeletonData);
+        this.animation = spAnimationState_create(animationStateData);
     }
 
     public function setAnimationByName(track: Int, name: CString, loop: Bool) {
@@ -86,15 +84,19 @@ implement Graphic for SpineSkeleton {
                     };
                     var color = Color.White.withAlpha(1); // FIXME
                     var uvs: Ptr[Float] = regionAttachment.uvs;
+                    var t1 = T(worldVertices[0], worldVertices[1], worldVertices[2], worldVertices[3], worldVertices[4], worldVertices[5]);
+                    var t2 = T(worldVertices[4], worldVertices[5], worldVertices[6], worldVertices[7], worldVertices[0], worldVertices[1]);
+                    t1.scale2(this.scale.fullScaleX, this.scale.fullScaleY);
+                    t2.scale2(this.scale.fullScaleX, this.scale.fullScaleY);
                     context.addTriangle(
                         key,
-                        T(worldVertices[0], worldVertices[1], worldVertices[2], worldVertices[3], worldVertices[4], worldVertices[5]),
+                        t1,
                         T(uvs[0], uvs[1], uvs[2], uvs[3], uvs[4], uvs[5]),
                         color, false
                     );
                     context.addTriangle(
                         key,
-                        T(worldVertices[4], worldVertices[5], worldVertices[6], worldVertices[7], worldVertices[0], worldVertices[1]),
+                        t2,
                         T(uvs[4], uvs[5], uvs[6], uvs[7], uvs[0], uvs[1]),
                         color, false
                     );
@@ -118,9 +120,11 @@ implement Graphic for SpineSkeleton {
                         var i0 = mesh.triangles[i * 3] << 1;
                         var i1 = mesh.triangles[i * 3 + 1] << 1;
                         var i2 = mesh.triangles[i * 3 + 2] << 1;
+                        var t = T(worldVertices[i0], worldVertices[i0 + 1], worldVertices[i1], worldVertices[i1 + 1], worldVertices[i2], worldVertices[i2 + 1]);
+                        t.scale2(this.scale.fullScaleX, this.scale.fullScaleY);
                         context.addTriangle(
                             key,
-                            T(worldVertices[i0], worldVertices[i0 + 1], worldVertices[i1], worldVertices[i1 + 1], worldVertices[i2], worldVertices[i2 + 1]),
+                            t,
                             T(uvs[i0], uvs[i0 + 1], uvs[i1], uvs[i1 + 1], uvs[i2], uvs[i2 + 1]),
                             color, false
                         );
