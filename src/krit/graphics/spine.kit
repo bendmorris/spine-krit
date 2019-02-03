@@ -1,9 +1,40 @@
 import kit.sys.file;
+import krit.systems.asset.asset_cache;
 
 include "spine/spine.h" => "spine-c";
 
+struct SkeletonBinaryData {
+    var atlas: Ptr[spAtlas];
+    var binary: Ptr[spSkeletonBinary];
+    var skeletonData: Ptr[spSkeletonData];
+    var animationStateData: Ptr[spAnimationStateData];
+}
+
 struct SpineSkeleton {
+    public static const TYPE = "sp";
+
     public static const worldVertices: Vector[Float] = Vector.new(256);
+
+    static function load(allocator: Box[Allocator], name: CString): Shared[Void] using implicit allocator {
+        var buf: CArray[Char, 64];
+        sprintf(buf, "%s.atlas", name);
+        var atlas: Ptr[spAtlas] = spAtlas_createFromFile(buf, null);
+        var binary: Ptr[spSkeletonBinary] = spSkeletonBinary_create(atlas);
+        sprintf(buf, "%s.skel", name);
+        var skeletonData: Ptr[spSkeletonData] = spSkeletonBinary_readSkeletonDataFile(binary, buf);
+        var animationStateData: Ptr[spAnimationStateData] = spAnimationStateData_create(skeletonData);
+        var shared = Shared.alloc(sizeof SkeletonBinaryData);
+        *shared = struct SkeletonBinaryData {atlas, binary, skeletonData, animationStateData};
+        return shared as Shared[Void];
+    }
+
+    static function dispose(allocator: Box[Allocator], data: Ptr[Void]) {
+        var bin = data as Ptr[SkeletonBinaryData];
+        spAnimationStateData_dispose(bin.animationStateData);
+        spSkeletonData_dispose(bin.skeletonData);
+        spSkeletonBinary_dispose(bin.binary);
+        spAtlas_dispose(bin.atlas);
+    }
 
     public var position: Point = P();
     public var scale: ScaleFactor = struct ScaleFactor;
@@ -16,19 +47,26 @@ struct SpineSkeleton {
 
     public var skeleton: Ptr[spSkeleton] = null;
     public var animation: Ptr[spAnimationState] = null;
+    public var skeletonData: Ptr[spSkeletonData] = null;
+    public var animationStateData: Ptr[spAnimationStateData] = null;
 
-    public function init(asset: Ptr[AssetContext], atlasName: CString, skeletonName: CString): Self {
+    var asset: Ptr[AssetContext];
+
+    public function init(asset: Ptr[AssetContext], name: CString): Self {
+        if !asset.cache.registered(Self.TYPE) {
+            asset.cache.register(Self.TYPE, struct AssetLoader {load: Self.load, dispose: Self.dispose});
+        }
         spineAssetContext = asset;
         spBone_setYDown(1);
 
         // skeleton/animation data
-        var atlas: Ptr[spAtlas] = spAtlas_createFromFile(atlasName, null);
-        var binary: Ptr[spSkeletonBinary] = spSkeletonBinary_create(atlas);
-        var skeletonData: Ptr[spSkeletonData] = spSkeletonBinary_readSkeletonDataFile(binary, skeletonName);
-        var animationStateData: Ptr[spAnimationStateData] = spAnimationStateData_create(skeletonData);
+        var bin = asset.get(Self.TYPE, name) as Ptr[SkeletonBinaryData];
         // instance data
-        this.skeleton = spSkeleton_create(skeletonData);
-        this.animation = spAnimationState_create(animationStateData);
+        this.skeletonData = bin.skeletonData;
+        this.animationStateData = bin.animationStateData;
+        this.skeleton = spSkeleton_create(bin.skeletonData);
+        this.animation = spAnimationState_create(bin.animationStateData);
+        this.asset = asset;
     }
 
     public function setAnimationByName(track: Int, name: CString, loop: Bool) {
@@ -41,6 +79,14 @@ struct SpineSkeleton {
 
     public function setAttachment(slot: CString, attachment: CString) {
         spSkeleton_setAttachment(this.skeleton, slot, attachment);
+    }
+
+    public function findAnimation(name: CString) {
+        return spSkeletonData_findAnimation(this.skeletonData, name);
+    }
+
+    public function setDefaultMix(t: Float) {
+        this.animationStateData.defaultMix = t;
     }
 }
 
@@ -149,7 +195,6 @@ var spineAssetContext: Ptr[AssetContext];
 
 // Spine extension functions
 #[extern] function _spUtil_readFile(path: CString, length: Ptr[Int]): CString {
-    printf("reading file %s\n", path);
     var f = File.read(path);
     *length = f.getSize();
     var buf = malloc(length);
@@ -159,7 +204,6 @@ var spineAssetContext: Ptr[AssetContext];
 
 
 #[extern] function _spAtlasPage_createTexture(page: Ptr[spAtlasPage], path: CString): Void {
-    printf("creating texture %s\n", path);
     var asset: Ptr[ImageData] = spineAssetContext.getImage(path);
     page.rendererObject = asset;
 }
