@@ -52,7 +52,7 @@ struct SpineSkeleton {
 
     var asset: Ptr[AssetContext];
 
-    public function init(asset: Ptr[AssetContext], name: CString): Self {
+    public function init(asset: Ptr[AssetContext], name: CString) {
         if !asset.cache.registered(Self.TYPE) {
             asset.cache.register(Self.TYPE, struct AssetLoader {load: Self.load, dispose: Self.dispose});
         }
